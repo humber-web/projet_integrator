@@ -1,0 +1,167 @@
+<api xmlns="http://ws.apache.org/ns/synapse" name="PedidosAPI" context="/pedidos" version="1.0.0" version-type="context">
+    <resource methods="POST" url-mapping="/">
+        <inSequence>
+            <!-- Step 1: Log Incoming Order -->
+            <log level="full">
+                <property name="Stage" value="Order Submission Received"/>
+                <property name="Incoming Payload" expression="json-eval($)"/>
+            </log>
+            <!-- Step 2: Call Django Backend to Save Order (POST) -->
+            <property name="DISABLE_CHUNKING" value="true" scope="axis2"/>
+            <call>
+                <endpoint>
+                    <address uri="http://web:8000/api/pedidos/"/>
+                </endpoint>
+            </call>
+            <!-- Step 3: Log Backend Response -->
+            <log level="full">
+                <property name="Backend Response" expression="json-eval($)"/>
+            </log>
+            <!-- Step 4: Extract Key Properties using a Script Mediator -->
+            <script language="js">
+                <![CDATA[
+                try {
+                    // Get the backend response payload as JSON
+                    var response = mc.getPayloadJSON();
+                    // Extract required fields from the JSON payload: id, empresa.email, valor, tipo, empresa.nome, and descricao
+                    mc.setProperty("orderId", response.id);
+                    mc.setProperty("orderEmail", response.empresa.email);
+                    mc.setProperty("orderValor", response.valor);
+                    mc.setProperty("orderTipo", response.tipo);
+                    mc.setProperty("orderEmpresa", response.empresa.nome);
+                    mc.setProperty("orderDescricao", response.descricao);
+                    mc.getServiceLog().info("Extracted orderId: " + response.id);
+                } catch(e) {
+                    mc.getServiceLog().error("Error extracting properties: " + e);
+                }
+                ]]>
+            </script>
+            <!-- Step 5: Log Extracted Properties -->
+            <log level="full">
+                <property name="Extracted orderId" expression="get-property('orderId')"/>
+                <property name="Extracted orderEmail" expression="get-property('orderEmail')"/>
+                <property name="Extracted orderValor" expression="get-property('orderValor')"/>
+                <property name="Extracted orderTipo" expression="get-property('orderTipo')"/>
+                <property name="Extracted orderEmpresa" expression="get-property('orderEmpresa')"/>
+                <property name="Extracted orderDescricao" expression="get-property('orderDescricao')"/>
+            </log>
+            <!-- Step 6: Prepare Payload for AWS Lambda Call -->
+            <payloadFactory media-type="json">
+                <format>{ "body": "{\"valor\":\"$1\", \"item\":\"$2\"}" }</format>
+                <args>
+                    <arg evaluator="xml" expression="$ctx:orderValor"/>
+                    <arg evaluator="xml" expression="$ctx:orderTipo"/>
+                </args>
+            </payloadFactory>
+            <log level="full">
+                <property name="AWS Payload" expression="json-eval($)"/>
+            </log>
+            <!-- Step 7: Call AWS Lambda Validation API -->
+            <call>
+                <endpoint>
+                    <address uri="https://zll6wt1cd1.execute-api.eu-north-1.amazonaws.com/dev"/>
+                </endpoint>
+            </call>
+            <!-- Step 8: Log AWS Lambda Raw Response -->
+            <log level="full">
+                <property name="AWS Lambda Raw Response" expression="json-eval($)"/>
+            </log>
+            <!-- Step 9: Parse AWS Lambda Response -->
+            <script language="js">
+                <![CDATA[
+                try {
+                    var awsResponse = mc.getPayloadJSON();
+                    var bodyStr = awsResponse.body; // body is a JSON string
+                    var bodyJson = JSON.parse(bodyStr);
+                    mc.setProperty("approvalType", bodyJson.approvalType);
+                    mc.setProperty("awsOrderValor", bodyJson.order.valor);
+                    mc.setProperty("awsOrderItem", bodyJson.order.item);
+                    mc.getServiceLog().info("Parsed AWS Response: " + JSON.stringify(bodyJson));
+                } catch(e) {
+                    mc.getServiceLog().error("Error parsing AWS response: " + e);
+                    mc.setProperty("approvalType", "ERROR");
+                }
+                ]]>
+            </script>
+            <!-- Step 10: Log Extracted approvalType -->
+            <log level="full">
+                <property name="ApprovalType" expression="get-property('approvalType')"/>
+            </log>
+            <!-- Step 11: Decision Based on approvalType -->
+            <filter xpath="get-property('approvalType') = 'AUTO'">
+                <then>
+                    <log level="full">
+                        <property name="Decision" value="AUTO_APPROVAL: updating order status and sending email"/>
+                    </log>
+                    <!-- Step 11A: Update Order Status via PUT using dynamic REST_URL_POSTFIX -->
+                    <property name="HTTP_METHOD" value="PUT" scope="axis2"/>
+                    <property name="DISABLE_CHUNKING" value="true" scope="axis2"/>
+                    <!-- Set dynamic REST_URL_POSTFIX with the extracted orderId -->
+                    <property name="REST_URL_POSTFIX" expression="fn:concat(get-property('orderId'), '/')" scope="axis2"/>
+                    <call>
+                        <endpoint>
+                            <address uri="http://web:8000/api/pedidos/"/>
+                        </endpoint>
+                    </call>
+                    <log level="full">
+                        <property name="Backend PUT Response" expression="json-eval($)"/>
+                    </log>
+                    <!-- Step 11B: Build Payload for Email Notification for AUTO_APPROVAL -->
+                    <payloadFactory media-type="json">
+                        <format>{ "orderId": "$1", "orderEmail": "$2", "status": "$3", "empresa": "$4", "descricao": "$5", "valor": "$6" }</format>
+                        <args>
+                            <arg evaluator="xml" expression="$ctx:orderId"/>
+                            <arg evaluator="xml" expression="$ctx:orderEmail"/>
+                            <arg evaluator="xml" expression="'APROVADO'"/>
+                            <arg evaluator="xml" expression="$ctx:orderEmpresa"/>
+                            <arg evaluator="xml" expression="$ctx:orderDescricao"/>
+                            <arg evaluator="xml" expression="$ctx:orderValor"/>
+                        </args>
+                    </payloadFactory>
+                    <log level="full">
+                        <property name="Email Payload" expression="json-eval($)"/>
+                    </log>
+                    <!-- Step 11C: Call Node Server to Send Email -->
+                    <call>
+                        <endpoint>
+                            <address uri="http://email_service:3000/send-email"/>
+                        </endpoint>
+                    </call>
+                </then>
+                <else>
+                    <log level="full">
+                        <property name="Decision" value="MANUAL_APPROVAL_REQUIRED: sending email notification"/>
+                    </log>
+                    <!-- Build Payload for Email Notification for Manual Approval -->
+                    <payloadFactory media-type="json">
+                        <format>{ "orderId": "$1", "orderEmail": "$2", "status": "$3", "empresa": "$4", "descricao": "$5", "valor": "$6" }</format>
+                        <args>
+                            <arg evaluator="xml" expression="$ctx:orderId"/>
+                            <arg evaluator="xml" expression="$ctx:orderEmail"/>
+                            <arg evaluator="xml" expression="'PENDENTE_APROVACAO'"/>
+                            <arg evaluator="xml" expression="$ctx:orderEmpresa"/>
+                            <arg evaluator="xml" expression="$ctx:orderDescricao"/>
+                            <arg evaluator="xml" expression="$ctx:orderValor"/>
+                        </args>
+                    </payloadFactory>
+                    <log level="full">
+                        <property name="Email Payload" expression="json-eval($)"/>
+                    </log>
+                    <call>
+                        <endpoint>
+                            <address uri="http://email_service:3000/send-email"/>
+                        </endpoint>
+                    </call>
+                </else>
+            </filter>
+            <!-- Step 12: Return Response to the Caller -->
+            <log level="full">
+                <property name="Stage" value="Flow Completed. Returning response to client."/>
+            </log>
+            <send/>
+        </inSequence>
+        <outSequence>
+            <send/>
+        </outSequence>
+    </resource>
+</api>

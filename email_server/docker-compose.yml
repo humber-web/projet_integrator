@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  email_service:
+    build: .
+    container_name: email_service
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    restart: always

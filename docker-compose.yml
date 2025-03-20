@@ -1,0 +1,65 @@
+version: '3.8'
+services:
+  web:
+    image: humberweb/django_app:latest
+    container_name: django_app
+    command: python sistema_pedidos/manage.py runserver 0.0.0.0:8000
+    # Mount your local project directory into the container, if needed
+    volumes:
+      - .:/app
+    working_dir: /app
+    ports:
+      - "8000:8000"
+    # Loads environment variables from an external .env file (if you have one)
+    env_file:
+      - .env
+    depends_on:
+      - db
+    networks:
+      - backend_network
+
+  db:
+    image: postgres:15
+    container_name: postgres_db
+    restart: always
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: pedidos_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - backend_network
+
+  email_service:
+    image: humberweb/email_service:latest
+    container_name: email_service
+    ports:
+      - "3000:3000"
+    environment:
+      SMTP_HOST: smtp.gmail.com
+      SMTP_PORT: 587
+      SMTP_USER: youremail@.com
+      SMTP_PASSWORD: yourpassword
+    depends_on:
+      - web
+    networks:
+      - backend_network
+
+  micro_integrator:
+    image: humberweb/sistemapedidos:1.0.0
+    container_name: micro_integrator
+    ports:
+      - "8290:8290"
+      - "8253:8253"
+    restart: always
+    networks:
+      - backend_network
+
+volumes:
+  postgres_data:
+
+networks:
+  backend_network:
