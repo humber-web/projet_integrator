@@ -6,8 +6,12 @@ __pycache__/
 *.egg-info/
 dist/
 build/
-venv/
-.venv/
+env/
+.env/
+staticfiles/
+admin/
+rest_framework/
+
 
 # Node
 node_modules/
