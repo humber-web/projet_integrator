@@ -60,11 +60,12 @@ This project integrates multiple services using Docker:
 6. **Response Delivery**:  
    Finally, the micro integrator completes the flow and returns a response to the client.
 
-## Accessing the Services
+## Access the Services
 
-- **Django app**: [http://localhost:8000](http://localhost:8000)
-- **Email service**: [http://localhost:3000](http://localhost:3000)
-- **Micro integrator**: Refer to your Docker Compose configuration for port mappings.
+- **Django App**: Open your browser and navigate to [http://localhost:8000](http://localhost:8000) to access the Django web application.
+- **Email Service**: Access the email service at [http://localhost:3000](http://localhost:3000) to view its interface.
+- **Micro Integrator**: Check your Docker Compose configuration for the port mappings, then access the service via the appropriate URL (e.g., [http://localhost:8290](http://localhost:8290) if that port is used).
+
 
 ## Contributing
 
